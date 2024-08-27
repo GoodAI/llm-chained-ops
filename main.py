@@ -61,9 +61,9 @@ def run_sequential_ops(
             if w not in current_words:
                 return w
 
-    for i in range(num_ops):
+    for op_idx in range(num_ops):
         ops = ["switch"]
-        if len(current_words) > 1:
+        if len(current_words) > max_words // 2:
             ops.append("remove")
         if len(current_words) < max_words:
             ops.append("append")
@@ -79,21 +79,21 @@ def run_sequential_ops(
         else:
             w1 = rnd.choice(current_words)
             w2 = new_word()
-            i = current_words.index(w1)
-            current_words[i] = w2
+            idx = current_words.index(w1)
+            current_words[idx] = w2
             ins = f"Switch [{w1}] for [{w2}]."
-        instructions.append(f"{i + 1}. {ins}")
+        instructions.append(f"{op_idx + 1}. {ins}")
 
     init_word_list = "[" + ";".join(init_words) + "]"
     instruction_list = "\n".join(instructions)
     context = [dict(role="user", content=(
-        f"Here is a list of words:\n\n{init_word_list}\n\nRespond with the resulting "
-        f"list of words after applying the following operations in order:\n\n"
-        f"{instruction_list}\n\nRespond only with the list of words, in the same format"
-        f" as given."
+        f"Here is a list of words:\n\n{init_word_list}\n\nRespond with the list of "
+        f"words that results after applying the following operations in order:\n\n"
+        f"{instruction_list}\n\nRespond only with the list of words. Use the same "
+        f"format as in the original list of words."
     ))]
 
-    response = completion(model, messages=context, temperature=0)
+    response = completion(model, messages=context, temperature=0).choices[0].message.content
 
     i = response.find("[")
     assert i >= 0
