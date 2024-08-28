@@ -5,26 +5,35 @@ from argparse import Namespace
 from pathlib import Path
 from random import Random
 from nltk import edit_distance
-from litellm import token_counter, completion
+from litellm import token_counter, completion, completion_cost
 
 
 def get_args() -> Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("model", type=str)
+    parser.add_argument("models", type=str, nargs="+",
+                        help="Models to run the test on, as taken by litellm.")
+    parser.add_argument("--max-ops", type=int, default=100,
+                        help="Maximum number of chained operations to test.")
+    parser.add_argument("--label", type=str, default=None,
+                        help="Save the results in a subfolder with this name.")
     return parser.parse_args()
 
 
 def run_sequential_ops(
     seed: int, model: str, num_initial_words: int, max_words: int, num_ops: int,
-) -> int:
+    label: str = None,
+) -> dict:
 
     model_str = model.replace("/", "-")
-    save_path = Path(__file__).parent.joinpath(
-        "results", model_str, f"{num_initial_words}_{max_words}-{num_ops}-{seed}.json",
+    save_dir = Path(__file__).parent.joinpath("results")
+    if label is not None:
+        save_dir = save_dir.joinpath(label)
+    save_path = save_dir.joinpath(
+        model_str, f"{num_initial_words}_{max_words}-{num_ops}-{seed}.json",
     )
     if save_path.exists():
         with open(save_path) as fd:
-            return json.load(fd)["dist"]
+            return json.load(fd)
 
     rnd = Random(seed)
 
@@ -43,6 +52,10 @@ def run_sequential_ops(
         s = f"[{w};{w};{w}]"
         if token_counter(model, text=s) == 7:
             single_token_words.append(w)
+            # If too many words are used, the final result depends less on the order of
+            # the operations and more on the last operations applied.
+            if len(single_token_words) == max_words * 2:
+                break
             if len(single_token_words) == len(equivalence_chars):
                 break
 
@@ -93,13 +106,16 @@ def run_sequential_ops(
         f"format as in the original list of words."
     ))]
 
-    response = completion(model, messages=context, temperature=0).choices[0].message.content
+    response_obj = completion(
+        model, messages=context, temperature=0, max_tokens=2 + 2 * max_words,
+    )
+    response = response_obj.choices[0].message.content
+    # Mistral tends to partially ignore the format and use "," instead of ";"
+    response = response.replace(",", ";")
 
     i = response.find("[")
-    assert i >= 0
     j = response.find("]", i + 1)
-    assert j > i
-    reply_word_list = response[i:j + 1]
+    reply_word_list = response[i:j + 1] if 0 <= i < j else ""
 
     m = re.match(r"^\[ *\w+ *(; *\w+ *)*]$", reply_word_list)
     reply_words = list()
@@ -112,58 +128,82 @@ def run_sequential_ops(
     )
     dist = edit_distance(target_chain, reply_chain)
 
+    result = dict(
+        seed=seed, model=model, num_initial_words=num_initial_words,
+        max_words=max_words, num_ops=num_ops, prompt=context[0]["content"],
+        response=response, reply_words=reply_words, expected=current_words,
+        dist=dist, cost=completion_cost(completion_response=response_obj),
+    )
     save_path.parent.mkdir(parents=True, exist_ok=True)
     with open(save_path, "w") as fd:
-        json.dump(dict(
-            seed=seed, model=model, num_initial_words=num_initial_words,
-            max_words=max_words, num_ops=num_ops, prompt=context[0]["content"],
-            response=response, reply_words=reply_words, expected=current_words,
-            dist=dist,
-        ), fd)
-    return dist
+        json.dump(result, fd)
+    return result
 
 
 def main(args: Namespace):
     import matplotlib.pyplot as plt
 
-    num_ops = list()
-    rates = list()
-    distances = list()
-    errors = list()
+    # Run tests and collect results
+    results = dict()
+    for model in args.models:
+        num_ops = list()
+        rates = list()
+        distances = list()
+        errors = list()
+        model_cost = 0
 
-    for n in range(1, 100):
-        num_ops.append(n)
-        dist_list = list()
-        for seed in range(5):
-            dist = run_sequential_ops(
-                seed=seed,
-                model=args.model,
-                num_initial_words=5,
-                max_words=8,
-                num_ops=n,
-            )
-            print(f"num_ops={n}; seed={seed}; dist={dist}")
-            dist_list.append(dist)
-        rate = sum(d == 0 for d in dist_list) / len(dist_list)
-        rates.append(rate)
-        avg_dist = sum(dist_list) / len(dist_list)
-        var = [(s - avg_dist) ** 2 for s in dist_list]
-        var = sum(var) / len(var)
-        distances.append(avg_dist)
-        errors.append(var ** 0.5)
+        for n in range(1, args.max_ops):
+            num_ops.append(n)
+            dist_list = list()
+            for seed in range(5):
+                result = run_sequential_ops(
+                    seed=seed,
+                    model=model,
+                    num_initial_words=5,
+                    max_words=8,
+                    num_ops=n,
+                    label=args.label,
+                )
+                dist = result["dist"]
+                print(f"num_ops={n}; seed={seed}; dist={dist}")
+                dist_list.append(dist)
+                model_cost += result["cost"]
+            rate = sum(d == 0 for d in dist_list) / len(dist_list)
+            rates.append(rate)
+            avg_dist = sum(dist_list) / len(dist_list)
+            var = [(s - avg_dist) ** 2 for s in dist_list]
+            var = sum(var) / len(var)
+            distances.append(avg_dist)
+            errors.append(var ** 0.5)
 
+        print(f"Total cost for model {model}: ${model_cost:.2f}")
+        results[model] = dict(
+            num_ops=num_ops, rates=rates, distances=distances, errors=errors,
+        )
+
+    # Plot figures
     plt.figure()
-    plt.errorbar(num_ops, distances, yerr=errors)
+    for model in args.models:
+        r = results[model]
+        plot = plt.plot(r["num_ops"], r["distances"], label=model)
+        upper_errors = [d + e for d, e in zip(r["distances"], r["errors"])]
+        lower_errors = [max(d - e, 0) for d, e in zip(r["distances"], r["errors"])]
+        plt.fill_between(
+            r["num_ops"], upper_errors, lower_errors,
+            color=plot[0].get_color(), alpha=0.2,
+        )
     plt.xlabel("Number of sequential operations")
     plt.ylabel("L-distance to reference")
-    plt.title(args.model)
+    plt.legend()
     plt.show()
 
     plt.figure()
-    plt.bar(num_ops, rates)
+    for model in args.models:
+        r = results[model]
+        plt.fill_between(r["num_ops"], r["rates"], [0] * len(r["rates"]), alpha=0.2, label=model)
     plt.xlabel("Number of sequential operations")
     plt.ylabel("Accuracy")
-    plt.title(args.model)
+    plt.legend()
     plt.show()
 
 
