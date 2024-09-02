@@ -12,8 +12,10 @@ def get_args() -> Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("models", type=str, nargs="+",
                         help="Models to run the test on, as taken by litellm.")
-    parser.add_argument("--max-ops", type=int, default=100,
+    parser.add_argument("--ops", type=int, default=60,
                         help="Maximum number of chained operations to test.")
+    parser.add_argument("--reps", type=int, default=5,
+                        help="Number of repetitions per configuration.")
     parser.add_argument("--label", type=str, default=None,
                         help="Save the results in a subfolder with this name.")
     return parser.parse_args()
@@ -152,10 +154,10 @@ def main(args: Namespace):
         errors = list()
         model_cost = 0
 
-        for n in range(1, args.max_ops):
+        for n in range(1, args.ops):
             num_ops.append(n)
             dist_list = list()
-            for seed in range(5):
+            for seed in range(args.reps):
                 result = run_sequential_ops(
                     seed=seed,
                     model=model,
@@ -198,9 +200,10 @@ def main(args: Namespace):
     plt.show()
 
     plt.figure()
-    for model in args.models:
+    for i, model in enumerate(args.models):
         r = results[model]
-        plt.fill_between(r["num_ops"], r["rates"], [0] * len(r["rates"]), alpha=0.2, label=model)
+        p = plt.fill_between(r["num_ops"], r["rates"], [0] * len(r["rates"]), alpha=0.2)
+        plt.plot(r["num_ops"], r["rates"], color=p.get_facecolor(), alpha=0.5, label=model)
     plt.xlabel("Number of sequential operations")
     plt.ylabel("Accuracy")
     plt.legend()
