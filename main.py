@@ -18,12 +18,23 @@ def get_args() -> Namespace:
                         help="Number of repetitions per configuration.")
     parser.add_argument("--label", type=str, default=None,
                         help="Save the results in a subfolder with this name.")
+    parser.add_argument("--only-switch", action="store_true",
+                        help="Use only switch actions, to keep the length constant.")
     return parser.parse_args()
+
+
+def extract_word_list(response: str) -> list[str]:
+    # Mistral tends to partially ignore the format and use "," instead of ";"
+    response = response.replace(",", ";")
+    m = re.search(r"\[? *\w+ *(; *\w+ *)+]?", response)
+    if m is None:
+        return []
+    return [w.strip() for w in m.group(0).strip("[]").split(";")]
 
 
 def run_sequential_ops(
     seed: int, model: str, num_initial_words: int, max_words: int, num_ops: int,
-    label: str = None,
+    only_switch: bool, label: str = None,
 ) -> dict:
 
     model_str = model.replace("/", "-")
@@ -51,7 +62,7 @@ def run_sequential_ops(
     # we'll take only words that have a dedicated token: 1 token = 1 word.
     single_token_words = list()
     for w in words:
-        s = f"[{w};{w};{w}]"
+        s = f"[{w};{w};{w}]"  # 2 brackets, 2 semicolons, 3 words -> 7 tokens
         if token_counter(model, text=s) == 7:
             single_token_words.append(w)
             # If too many words are used, the final result depends less on the order of
@@ -78,10 +89,11 @@ def run_sequential_ops(
 
     for op_idx in range(num_ops):
         ops = ["switch"]
-        if len(current_words) > max_words // 2:
-            ops.append("remove")
-        if len(current_words) < max_words:
-            ops.append("append")
+        if not only_switch:
+            if len(current_words) > max_words // 2:
+                ops.append("remove")
+            if len(current_words) < max_words:
+                ops.append("append")
         op = rnd.choice(ops)
         if op == "append":
             w = new_word()
@@ -112,17 +124,7 @@ def run_sequential_ops(
         model, messages=context, temperature=0, max_tokens=2 + 2 * max_words,
     )
     response = response_obj.choices[0].message.content
-    # Mistral tends to partially ignore the format and use "," instead of ";"
-    response = response.replace(",", ";")
-
-    i = response.find("[")
-    j = response.find("]", i + 1)
-    reply_word_list = response[i:j + 1] if 0 <= i < j else ""
-
-    m = re.match(r"^\[ *\w+ *(; *\w+ *)*]$", reply_word_list)
-    reply_words = list()
-    if m is not None:
-        reply_words = [w.strip() for w in reply_word_list.strip("[]").split(";")]
+    reply_words = extract_word_list(response)
 
     target_chain = "".join(word_to_char[word] for word in current_words)
     reply_chain = "".join(
@@ -132,14 +134,22 @@ def run_sequential_ops(
 
     result = dict(
         seed=seed, model=model, num_initial_words=num_initial_words,
-        max_words=max_words, num_ops=num_ops, prompt=context[0]["content"],
-        response=response, reply_words=reply_words, expected=current_words,
-        dist=dist, cost=completion_cost(completion_response=response_obj),
+        max_words=max_words, num_ops=num_ops, only_switch=only_switch,
+        prompt=context[0]["content"], response=response, reply_words=reply_words,
+        expected=current_words, dist=dist,
+        cost=completion_cost(completion_response=response_obj),
     )
     save_path.parent.mkdir(parents=True, exist_ok=True)
     with open(save_path, "w") as fd:
         json.dump(result, fd)
     return result
+
+
+def get_label(model: str) -> str:
+    label = model.split("/")[-1]
+    if model.startswith("claude"):
+        label = "-".join(label.split("-")[:-1])
+    return label
 
 
 def main(args: Namespace):
@@ -154,7 +164,7 @@ def main(args: Namespace):
         errors = list()
         model_cost = 0
 
-        for n in range(1, args.ops):
+        for n in range(1, args.ops + 1):
             num_ops.append(n)
             dist_list = list()
             for seed in range(args.reps):
@@ -165,6 +175,7 @@ def main(args: Namespace):
                     max_words=8,
                     num_ops=n,
                     label=args.label,
+                    only_switch=args.only_switch,
                 )
                 dist = result["dist"]
                 print(f"num_ops={n}; seed={seed}; dist={dist}")
@@ -187,7 +198,7 @@ def main(args: Namespace):
     plt.figure()
     for model in args.models:
         r = results[model]
-        plot = plt.plot(r["num_ops"], r["distances"], label=model)
+        plot = plt.plot(r["num_ops"], r["distances"], label=get_label(model))
         upper_errors = [d + e for d, e in zip(r["distances"], r["errors"])]
         lower_errors = [max(d - e, 0) for d, e in zip(r["distances"], r["errors"])]
         plt.fill_between(
@@ -203,7 +214,10 @@ def main(args: Namespace):
     for i, model in enumerate(args.models):
         r = results[model]
         p = plt.fill_between(r["num_ops"], r["rates"], [0] * len(r["rates"]), alpha=0.2)
-        plt.plot(r["num_ops"], r["rates"], color=p.get_facecolor(), alpha=0.5, label=model)
+        plt.plot(
+            r["num_ops"], r["rates"],
+            color=p.get_facecolor(), alpha=0.5, label=get_label(model),
+        )
     plt.xlabel("Number of sequential operations")
     plt.ylabel("Accuracy")
     plt.legend()
