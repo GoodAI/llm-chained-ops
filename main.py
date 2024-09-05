@@ -153,6 +153,7 @@ def get_label(model: str) -> str:
 
 
 def main(args: Namespace):
+    import matplotlib as mpl
     import matplotlib.pyplot as plt
 
     # Run tests and collect results
@@ -210,17 +211,25 @@ def main(args: Namespace):
     plt.legend()
     plt.show()
 
-    plt.figure()
+    colors = mpl.colormaps["tab10"].colors
+    num_models = len(args.models)
+    assert num_models <= len(colors)
+    fig, axs = plt.subplots(num_models, 1, figsize=(6, 4 * num_models), sharex=True)
+    handles = list()
+    labels = list()
     for i, model in enumerate(args.models):
         r = results[model]
-        p = plt.fill_between(r["num_ops"], r["rates"], [0] * len(r["rates"]), alpha=0.2)
-        plt.plot(
-            r["num_ops"], r["rates"],
-            color=p.get_facecolor(), alpha=0.5, label=get_label(model),
-        )
-    plt.xlabel("Number of sequential operations")
-    plt.ylabel("Accuracy")
-    plt.legend()
+        ax = axs[i] if num_models > 1 else axs
+        handles.append(ax.fill_between(
+            r["num_ops"], r["rates"], [0] * len(r["rates"]), alpha=0.5, color=colors[i],
+        ))
+        labels.append(get_label(model))
+        ax.plot(r["num_ops"], r["rates"], color=colors[i])
+        ax.set_ylabel("Accuracy")
+
+    axs[-1].set_xlabel("Number of sequential operations")
+    fig.legend(handles, labels, loc='center right')
+    plt.tight_layout()
     plt.show()
 
 
