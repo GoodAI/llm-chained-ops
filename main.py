@@ -12,6 +12,7 @@ def get_args() -> Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("models", type=str, nargs="+",
                         help="Models to run the test on, as taken by litellm.")
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--ops", type=int, default=60,
                         help="Maximum number of chained operations to test.")
     parser.add_argument("--reps", type=int, default=5,
@@ -168,7 +169,8 @@ def main(args: Namespace):
         for n in range(1, args.ops + 1):
             num_ops.append(n)
             dist_list = list()
-            for seed in range(args.reps):
+            for repetition in range(args.reps):
+                seed = args.seed + repetition
                 result = run_sequential_ops(
                     seed=seed,
                     model=model,
@@ -215,20 +217,21 @@ def main(args: Namespace):
     num_models = len(args.models)
     assert num_models <= len(colors)
     fig, axs = plt.subplots(num_models, 1, figsize=(6, 4 * num_models), sharex=True)
-    handles = list()
-    labels = list()
-    for i, model in enumerate(args.models):
+    aucs = {m: sum(results[m]["rates"]) for m in args.models}
+    for i, model in enumerate(sorted(args.models, key=lambda m: -aucs[m])):
         r = results[model]
         ax = axs[i] if num_models > 1 else axs
-        handles.append(ax.fill_between(
-            r["num_ops"], r["rates"], [0] * len(r["rates"]), alpha=0.5, color=colors[i],
-        ))
-        labels.append(get_label(model))
+        ax.fill_between(
+            r["num_ops"], r["rates"], [0] * len(r["rates"]),
+            alpha=0.5, color=colors[i], label=get_label(model),
+        )
         ax.plot(r["num_ops"], r["rates"], color=colors[i])
+        o1, o2 = r["num_ops"][0], r["num_ops"][-1]
+        ax.text(o1 + 0.75 * (o2 - o1), 0.5, f"AuC = {sum(r['rates']):.1f}")
         ax.set_ylabel("Accuracy")
+        ax.legend()
 
     axs[-1].set_xlabel("Number of sequential operations")
-    fig.legend(handles, labels, loc='center right')
     plt.tight_layout()
     plt.show()
 
