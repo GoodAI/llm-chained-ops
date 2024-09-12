@@ -19,8 +19,8 @@ def get_args() -> Namespace:
                         help="Number of repetitions per configuration.")
     parser.add_argument("--label", type=str, default=None,
                         help="Save the results in a subfolder with this name.")
-    parser.add_argument("--only-switch", action="store_true",
-                        help="Use only switch actions, to keep the length constant.")
+    parser.add_argument("--variable-len", action="store_true",
+                        help="Allow operations that alter the list's length.")
     return parser.parse_args()
 
 
@@ -35,7 +35,7 @@ def extract_word_list(response: str) -> list[str]:
 
 def run_sequential_ops(
     seed: int, model: str, num_initial_words: int, max_words: int, num_ops: int,
-    only_switch: bool, label: str = None,
+    variable_len: bool = False, label: str = None,
 ) -> dict:
 
     model_str = model.replace("/", "-")
@@ -90,7 +90,7 @@ def run_sequential_ops(
 
     for op_idx in range(num_ops):
         ops = ["switch"]
-        if not only_switch:
+        if variable_len:
             if len(current_words) > max_words // 2:
                 ops.append("remove")
             if len(current_words) < max_words:
@@ -135,7 +135,7 @@ def run_sequential_ops(
 
     result = dict(
         seed=seed, model=model, num_initial_words=num_initial_words,
-        max_words=max_words, num_ops=num_ops, only_switch=only_switch,
+        max_words=max_words, num_ops=num_ops, variable_len=variable_len,
         prompt=context[0]["content"], response=response, reply_words=reply_words,
         expected=current_words, dist=dist,
         cost=completion_cost(completion_response=response_obj),
@@ -178,7 +178,7 @@ def main(args: Namespace):
                     max_words=8,
                     num_ops=n,
                     label=args.label,
-                    only_switch=args.only_switch,
+                    variable_len=args.variable_len,
                 )
                 dist = result["dist"]
                 print(f"num_ops={n}; seed={seed}; dist={dist}")
