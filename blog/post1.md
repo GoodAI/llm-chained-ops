@@ -1,50 +1,84 @@
-# Testing the logical reasoning capabilities of LLMs
+# Testing the Limits of Sequential Processing in Large Language Models
 
-LLMs have improved a lot in the last few years. They are now capable of performing harder tasks, taking longer inputs, including other types of data… LLMs have become ubiquitous, and even your neighbours talk about them. Yet one thing is very unlikely to change: **we need to tell them what we want them to do**. For LLMs, this means writing prompts.
+Large Language Models (LLMs) have demonstrated remarkable capabilities in various tasks, ranging from natural language processing to mathematical problem-solving, code generation, and even multimodal understanding. Yet, despite these impressive feats, their reasoning abilities have been repeatedly criticized [[1-6](#references)]. This article presents a novel approach to evaluating the sequential processing and working memory capabilities of LLMs through a simple yet effective minimal experiment. 
 
-Entire books have been written about prompting techniques, which are an indispensable tool to grasp if one wants their wishes to be considered by the model. However, this scenario is not ideal. **A perfect language model should be able to understand any set of instructions that a human would**, but current implementations are still far from reaching that point. Imprecision in the attention mechanism, hallucinations, and interferences between different pieces of information are just some of the most recurring hurdles of current LLMs.
+Drawing from our experience in developing [agents with Long-Term Memory (LTM)](https://github.com/GoodAI/goodai-ltm-benchmark) and integrating them into [videogames](https://www.aipeoplegame.com/), we have identified notable constraints in LLMs' abilities to sustain and manipulate information over multiple steps—essential for sophisticated reasoning. To systematically evaluate and quantify these limitations, we conducted a study focusing on LLMs' capacity to perform temporally dependent operations. We employed a straightforward yet insightful word substitution task to highlight both the strengths and weaknesses of current LLM architectures in complex information processing tasks, offering valuable insights into their sequential reasoning and working memory capabilities.
 
-Right now, many benchmarks focus on evaluating the performance on tasks that require the LLM to ingest huge amounts of text and find key information in it. This is understandable, since such long contexts are a newly added feature and everyone is eager to find out how useful it actually is, and whether they can fit all the information they need, perform in-context learning, etc. However, **quite often LLMs are just incapable of making sense of extremely short and straightforward prompts**. During our efforts in [developing agents with Long-Term Memory (LTM)](https://github.com/GoodAI/goodai-ltm-benchmark), as well as in [integrating these agents in videogames](https://www.aipeoplegame.com/), we have found the **logical reasoning capabilities of LLMs to be one of the major pitfalls**.
+Our experiments demonstrate that even with the relatively simple task of word substitutions, most LLMs begin to falter after just two sequential operations, with accuracy dropping sharply as the number of operations increases. This reveals a fundamental weakness in LLMs' ability to handle tasks requiring step-by-step logical thinking, contrasting with their strong performance in other areas. These results have important implications for understanding the limitations of LLMs in sequential reasoning tasks and provide a swift, effective method for assessing an LLM's cognitive-like abilities.
 
-If you have worked with LLMs yourself, you have surely faced the following situation: you want the LLM to perform a simple task (or so you think), so you write down a description of what the task is about, and enumerate a set of simple rules that the LLM has to follow in order to produce a reasonable output. And here is where you spend hours or days tweaking the prompt and finding absurdly verbose ways of explaining your intentions, because the LLM ignores some rules, interprets them in unexpected ways, or simply seems to not understand what you are talking about.
 
-Transformer-based LLMs are composed of several layers, each of them performing a combination of cross-attention and transformation of the representation vectors. The more layers a model has, the more times it can transform the input sequence, and the more reasoning steps it can perform over it. Surely the LLM will have learned a good amount of shortcuts from frequent cases in the training data (just like chess players memorize plays), but that won’t work when facing unseen data. The underlying question is **how much can it do in one shot?** The LLM’s internal reasoning capability will ultimately **bottleneck what concepts the LLM can grasp, and how many interlinked rules it can apply at one time**.
+## The Word Swap Challenge: Pushing LLMs to Their Processing Limits
 
-## Do the switch-switch
+Building on our observations of LLM limitations, we developed the "Word Swap Challenge" to systematically evaluate these constraints. Enter the "Word Swap Challenge" – a deceptively straightforward task that pushes language models to their cognitive limits.
 
-This motivated us to design a test to evaluate **how many sequentially-dependent operations an LLM can perform in one shot**. Interestingly, we have found that the results correlate very well with the expected reasoning skills of each model, and we leverage the test to assess any new LLM before even attempting to integrate it in any of our systems.
+**The task is as follows**: We present an LLM with a list of $N$ ordinary words, in this specific study $N=5$. Then, we challenge it to perform a series of word swaps, each building upon the last. It's like a high-stakes game of verbal Jenga, where one misstep can bring the whole structure tumbling down.
 
-The task consists in applying a series of transformations to a list of words. The LLM is given an initial list of five words, and then it is asked to perform a number of operations on the list, each of which switches one word in the list for another.
+This test isn't just a playful experiment; it's a powerful tool that offers deep insights into an LLM's sequential reasoning capabilities. We've discovered a fascinating correlation: an LLM's performance on this task is a surprisingly accurate predictor of its overall cognitive prowess, at least in the context of our systems. So much so, that we now use it as a litmus test for any new language model before integrating it into our systems.
 
-`Here is a list of words:`
+Here's what makes the **Word Swap Challenge** so compelling:
+1. It isolates pure sequential processing, free from the noise of complex language or vast knowledge bases.
+2. It reveals how many interconnected steps an LLM can juggle in its *'mental workspace'*.
+3. It exposes the delicate balance between an LLM's short-term memory and its ability to apply rules consistently.
 
-`[rush;night;stone;chain;testing]`
+As we'll see, even the most advanced LLMs can stumble when the chain of operations grows too long. It's a humbling reminder that beneath their seemingly boundless knowledge, these models still grapple with the fundamentals of logical thinking.
 
-`Respond with the list of words that results after applying the following operations in order:`
+#### Example prompt
+```
+Here is a list of words:
+[rush;night;stone;chain;testing]
 
-`1. Switch [rush] for [ghost].`  
-`2. Switch [testing] for [population].`  
-`3. Switch [ghost] for [rush].`  
-`4. Switch [stone] for [ghost].`
+Respond with the list of words that results after applying the following operations in order:
 
-`Respond only with the list of words. Use the same format as in the original list of words.`
+1. Switch [rush] for [ghost].
+2. Switch [testing] for [population].
+3. Switch [ghost] for [rush].
+4. Switch [stone] for [ghost].
 
-The resulting prompts are very short and clear, and we carefully select the formatting and words so that: 1\) words are common; 2\) each of the words is represented as a single token. This way we isolate the internal reasoning mechanism from other phenomena like tokenization or [lost-in-the-middle](https://arxiv.org/abs/2307.03172) effects. In the case above, we would expect the list `[rush;night;ghost;chain;population]` as the final output.
+Respond only with the list of words. Use the same format as in the original list of words.
+```
+
+The prompts we craft are short and straightforward, with careful attention to formatting and word choice. Specifically, we ensure that: 
+1. the words used are common and familiar; 
+2. each word is represented by a single token. 
+
+This approach allows us to focus solely on the model’s sequential reasoning processes, eliminating factors like tokenization artifacts or mid-sentence misunderstandings. For instance, in the example above, the expected final list is `[rush; night; ghost; chain; population]`.
 
 ## Results
+Our experiments encompass a range of 1 to 30 switch operations, with each configuration tested 10 times to evaluate the consistency of correct responses from each LLM. We deliberately adopt a lenient approach to output formatting to isolate and assess the models' core reasoning capabilities. This flexibility in formatting doesn't affect the performance of more advanced LLMs, though some less sophisticated models occasionally struggle with precise output structure.
 
-Ranging from a single switch operation to 30, we perform 10 runs of each configuration and measure how often each LLM produces the right response. Additionally, and to further isolate the internal reasoning capabilities, we are not too strict about the formatting of the output. This is not an issue with the more performant LLMs, but the weaker ones do sometimes make formatting mistakes.
+To ensure a comprehensive evaluation, we tested a diverse array of LLMs, including various versions of closed-weight models (o-1, GPT-4 Turbo, GPT-4o, and other  variants by OpenAI), Claude Sonnet, as well as other prominent open-weight language models, such as LLaMA 3 8B and Mixtral. This broad selection allows us to draw meaningful comparisons across different model architectures and training approaches.
 
-![Results of the switch-switch test](images/results1.png)
+![Results](./images/results1.png)
 
-Interestingly, this otherwise very simple task turns out to be very challenging for the LLMs. Most of them start making mistakes as soon as 2 operations are given, and very few achieve a reasonable accuracy after 5 operations. The best LLM is Claude 3.5 Sonnet, and yet it cannot make it past the 10 operations mark without making some mistakes. We also observe that the *old* GPT-4 and GPT-4 turbo still hold up quite well in front of their more recent 4o alternatives.
+Surprisingly, this seemingly straightforward task proves to be a formidable challenge for the LLMs. The majority of models begin to err after just 2 operations, and only a handful maintain reasonable accuracy beyond 5 operations. OpenAI's o1-mini emerges as the top performer, followed by Claude 3.5 Sonnet, yet Sonnet still struggles to surpass the 10-operation threshold without errors. Meanwhile, both the older GPT-4 and GPT-4 Turbo models continue to perform robustly, outperforming their newer 4o alternatives.
 
-One detail that caught our attention is a sudden performance dip which is present at the 4 operations point for 5 of all models tested. Upon closer inspection, this scenario seems to be related to a higher-than-usual occurrence of word reinstatements. It looks like most models have difficulty dealing with situations where a word is replaced, but later on brought back to the list. The bump is quite severe for the old GPT-4s.
+The results from o1-mini may initially suggest that it outperforms other models in reasoning tasks; however, this interpretation is not accurate. Our word-swap challenge specifically evaluates one-shot responses, whereas Chain-of-Thought (CoT) approaches operate differently by breaking down reasoning into intermediate steps. Consequently, o1-preview’s performance does not necessarily indicate it is categorically more powerful than other models. Moreover, while CoT excels in scenarios that can be clearly articulated through sequential instructions, it faces significant challenges with tasks requiring advanced abstraction and complex logical reasoning. These types of problems often exceed the capabilities of token-based thinking methods, highlighting that no single approach currently dominates across all facets of reasoning in large language models.
+
+A particularly intriguing observation is the pronounced performance dip occurring at the 4-operation mark across 5 of the models tested. A deeper analysis suggests that this dip is linked to an increased rate of word reinstatements, where a word is replaced and then reintroduced into the list. This pattern presents a significant challenge for most models, with the older GPT-4 versions exhibiting the most severe impact.
 
 ## Conclusions
+These findings highlight a critical vulnerability in current LLMs: their difficulty with prompts that demand sequential thinking. Despite their capacity to handle inputs spanning thousands of tokens, our tests utilize fewer than 340 tokens and a simple word-swap procedure, demonstrating that the challenge lies not in the volume of input but in the complexity of the processing or reasoning required. We believe these insights enhance our understanding of the limitations in LLMs' logical processing and provide a swift method for assessing an LLM’s reasoning abilities. This, in turn, influences its capability to generalize to novel scenarios where it hasn't relied on pre-learned reasoning shortcuts.
 
-These results reveal a significant weak point of current LLMs, which struggle with prompts that require sequential thinking. While LLMs offer input lengths of many thousands of tokens, our tests require less than 340 tokens of input. These results have important implications for the understanding of how LLMs are limited in terms of logical thinking, and also offer a quick means for estimating an LLM’s reasoning capabilities, which should reflect on its ability to generalize to novel scenarios, for which it hasn’t learned reasoning shortcuts.
+Looking ahead, we aim to delve deeper into the impact of compounding errors, such as those previously discussed, by pinpointing specific cases that present unique challenges to LLMs. Additionally, we plan to investigate how varying prompt lengths affect accuracy rates, thereby gaining a more comprehensive view of how prompt size influences logical reasoning performance. Last but not least, we will explore whether standard CoT improves performance of LLMs on the Word Swap Challenge and whether a more advanced CoT approach could approach the performance of the best performing LLM in the study, namely o1-mini, which uses internal reasoning traces to improve performance on tasks that require step-by-step logical reasoning.
 
-In future work, we want to analyze in detail the effects of compounding errors like the one discussed before, identifying cases that pose special challenges to LLMs. We also want to explore larger prompts, to see how accuracy ratios are affected by the prompt length.
+You can access the code for these experiments in our [GitHub repository](https://github.com/GoodAI/llm-chained-ops), and view the results through this [link](https://drive.google.com/file/d/1LZEeqkuBjjDaIm-WkQ6fJ6p1LzFeEy66/view?usp=sharing).
 
-You can find the code for these experiments in our [GitHub repository](https://github.com/GoodAI/llm-chained-ops), and the results shown here in [this link](https://drive.google.com/file/d/1LZEeqkuBjjDaIm-WkQ6fJ6p1LzFeEy66/view?usp=sharing).
+## References
+
+[1] Can Large Language Models Reason and Plan?
+Kambhampati, S. (2024). Can large language models reason and plan? arXiv preprint arXiv:2403.04121. Retrieved from https://arxiv.org/abs/2403.04121
+
+[2] Reasoning with Language Model Prompting: A Survey
+Qiao, S., Ou, Y., Zhang, N., Chen, X., Yao, Y., Deng, S., Tan, C., Huang, F., & Chen, H. (2023). Reasoning with language model prompting: A survey. arXiv preprint arXiv:2212.09597. Retrieved from https://arxiv.org/abs/2212.09597
+
+[3] Reasoning or Reciting? Exploring the Capabilities and Limitations of Language Models Through Counterfactual Tasks
+Wu, Z., Qiu, L., Ross, A., Akyürek, E., Chen, B., Wang, B., Kim, N., Andreas, J., & Kim, Y. (2024). In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers), pages 1819–1862. Mexico City, Mexico: Association for Computational Linguistics. doi:[10.18653/v1/2024.naacl-long.102](https://doi.org/10.18653/v1/2024.naacl-long.102)
+
+[4] Inductive or Deductive? Rethinking the Fundamental Reasoning Abilities of LLMs
+Wang, Z., Fan, W., Zong, Q., Zhang, H., Choi, S., Fang, T., Liu, X., Song, Y., Wong, G. Y., & See, S. (2024). Inductive or deductive? Rethinking the fundamental reasoning abilities of LLMs. arXiv preprint arXiv:2408.00114. Retrieved from https://arxiv.org/abs/2408.00114
+
+[5] Do Large Language Models Reason Like Us?
+Lampinen, A. K., Dasgupta, I., Chan, S. C. Y., Sheahan, H. R., Creswell, A., Kumaran, D., McClelland, J. L., & Hill, F. (2024). Do large language models reason like us? PNAS Nexus, 3(7), page 233. doi:10.1093/pnasnexus/pgae233
+
+[6] Reasoning Abilities of Large Language Models: In-Depth Analysis on the Abstraction and Reasoning Corpus
+Huang, J., & Chang, K. C.-C. (2024). Reasoning abilities of large language models: In-depth analysis on the abstraction and reasoning corpus. arXiv preprint arXiv:2403.11793. Retrieved from https://arxiv.org/abs/2403.11793
