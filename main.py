@@ -13,9 +13,9 @@ def get_args() -> Namespace:
     parser.add_argument("models", type=str, nargs="+",
                         help="Models to run the test on, as taken by litellm.")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--ops", type=int, default=60,
+    parser.add_argument("--ops", type=int, default=30,
                         help="Maximum number of chained operations to test.")
-    parser.add_argument("--reps", type=int, default=5,
+    parser.add_argument("--reps", type=int, default=10,
                         help="Number of repetitions per configuration.")
     parser.add_argument("--label", type=str, default=None,
                         help="Save the results in a subfolder with this name.")
@@ -24,13 +24,24 @@ def get_args() -> Namespace:
     return parser.parse_args()
 
 
-def extract_word_list(response: str) -> list[str]:
+def evaluate_response(
+    response: str, expected: list[str], word_to_char: dict[str, str],
+) -> tuple[int, list[str]]:
     # Mistral tends to partially ignore the format and use "," instead of ";"
     response = response.replace(",", ";")
-    m = re.search(r"\[? *\w+ *(; *\w+ *)+]?", response)
-    if m is None:
-        return []
-    return [w.strip() for w in m.group(0).strip("[]").split(";")]
+    target_chain = "".join(word_to_char[word] for word in expected)
+    dist = len(expected)
+    reply_words = []
+    for m in re.finditer(r"\[? *\w+ *(; *\w+ *)+]?", response):
+        rwords = [w.strip() for w in m.group(0).strip("[]").split(";")]
+        reply_chain = "".join(
+            word_to_char.get(word, chr(ord("z") + 1)) for word in rwords
+        )
+        d = edit_distance(target_chain, reply_chain)
+        if d < dist:
+            dist = d
+            reply_words = rwords
+    return dist, reply_words
 
 
 def run_sequential_ops(
@@ -121,17 +132,16 @@ def run_sequential_ops(
         f"format as in the original list of words."
     ))]
 
+    temperature = 1
+    max_tokens = 2 + 2 * max_words
+    if model.startswith("o1-"):
+        # OpenAI o1 models work only with temp=1 and without limit on the output tokens
+        temperature, max_tokens = 1, None
     response_obj = completion(
-        model, messages=context, temperature=0, max_tokens=2 + 2 * max_words,
+        model, messages=context, temperature=temperature, max_tokens=max_tokens,
     )
     response = response_obj.choices[0].message.content
-    reply_words = extract_word_list(response)
-
-    target_chain = "".join(word_to_char[word] for word in current_words)
-    reply_chain = "".join(
-        word_to_char.get(word, chr(ord("z") + 1)) for word in reply_words
-    )
-    dist = edit_distance(target_chain, reply_chain)
+    dist, reply_words = evaluate_response(response, current_words, word_to_char)
 
     result = dict(
         seed=seed, model=model, num_initial_words=num_initial_words,
@@ -156,6 +166,7 @@ def get_label(model: str) -> str:
 def main(args: Namespace):
     import matplotlib as mpl
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
 
     # Run tests and collect results
     results = dict()
@@ -222,14 +233,14 @@ def main(args: Namespace):
         r = results[model]
         ax = axs[i] if num_models > 1 else axs
         ax.fill_between(
-            r["num_ops"], r["rates"], [0] * len(r["rates"]),
-            alpha=0.5, color=colors[i], label=get_label(model),
+            r["num_ops"], r["rates"], [0] * len(r["rates"]), alpha=0.5, color=colors[i],
         )
         ax.plot(r["num_ops"], r["rates"], color=colors[i])
         o1, o2 = r["num_ops"][0], r["num_ops"][-1]
         ax.text(o1 + 0.75 * (o2 - o1), 0.5, f"AuC = {sum(r['rates']):.1f}")
         ax.set_ylabel("Accuracy")
-        ax.legend()
+        ax.legend(markerfirst=False, handlelength=0, handleheight=0, handletextpad=0,
+                  handles=[Patch(label=get_label(model))], loc="upper right")
 
     axs[-1].set_xlabel("Number of sequential operations")
     plt.tight_layout()
