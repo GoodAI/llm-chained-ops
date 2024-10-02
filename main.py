@@ -194,7 +194,7 @@ def main(args: Namespace):
                 dist = result["dist"]
                 print(f"num_ops={n}; seed={seed}; dist={dist}")
                 dist_list.append(dist)
-                model_cost += result["cost"]
+                model_cost += result["cost"] or 0
             rate = sum(d == 0 for d in dist_list) / len(dist_list)
             rates.append(rate)
             avg_dist = sum(dist_list) / len(dist_list)
@@ -224,21 +224,25 @@ def main(args: Namespace):
     plt.legend()
     plt.show()
 
+    plt.rcParams.update({'font.size': 6})
     colors = mpl.colormaps["tab10"].colors
+    get_color = lambda i: colors[i % len(colors)]
     num_models = len(args.models)
-    assert num_models <= len(colors)
     fig, axs = plt.subplots(num_models, 1, figsize=(6, 4 * num_models), sharex=True)
     aucs = {m: sum(results[m]["rates"]) for m in args.models}
     for i, model in enumerate(sorted(args.models, key=lambda m: -aucs[m])):
         r = results[model]
         ax = axs[i] if num_models > 1 else axs
         ax.fill_between(
-            r["num_ops"], r["rates"], [0] * len(r["rates"]), alpha=0.5, color=colors[i],
+            r["num_ops"], r["rates"], [0] * len(r["rates"]),
+            alpha=0.5, color=get_color(i),
         )
-        ax.plot(r["num_ops"], r["rates"], color=colors[i])
+        ax.plot(r["num_ops"], r["rates"], color=get_color(i))
         o1, o2 = r["num_ops"][0], r["num_ops"][-1]
-        ax.text(o1 + 0.75 * (o2 - o1), 0.5, f"AuC = {sum(r['rates']):.1f}")
+        ax.text(o1 + 0.6 * (o2 - o1), 0.5, f"AuC = {sum(r['rates']):.1f}")
         ax.set_ylabel("Accuracy")
+        ax.set_ylim((0, 1.05))
+        ax.set_xlim((o1, o2))
         ax.legend(markerfirst=False, handlelength=0, handleheight=0, handletextpad=0,
                   handles=[Patch(label=get_label(model))], loc="upper right")
 
