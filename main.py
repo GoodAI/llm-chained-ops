@@ -1,11 +1,12 @@
 import re
 import json
+import time
 import argparse
 from argparse import Namespace
 from pathlib import Path
 from random import Random
 from nltk import edit_distance
-from litellm import token_counter, completion, completion_cost
+from litellm import token_counter, completion, completion_cost, ModelResponse
 
 
 def get_args() -> Namespace:
@@ -21,7 +22,32 @@ def get_args() -> Namespace:
                         help="Save the results in a subfolder with this name.")
     parser.add_argument("--variable-len", action="store_true",
                         help="Allow operations that alter the list's length.")
+    parser.add_argument("--temperature", type=float, default=0,
+                        help="Default temperature for the LLM calls.")
     return parser.parse_args()
+
+
+def warn_once(warning: str) -> bool:
+    if not hasattr(warn_once, "warned"):
+        warn_once.warned = set()
+    warned = False
+    if warning not in warn_once.warned:
+        print("WARNING:", warning)
+        warn_once.warned.add(warning)
+        warned = True
+    return warned
+
+
+def safe_completion(
+    model: str, max_retries=3, retry_delay=5, **kwargs,
+) -> ModelResponse:
+    for r in range(max_retries):
+        try:
+            return completion(model, **kwargs)
+        except Exception:
+            if r == max_retries - 1:
+                raise
+            time.sleep(retry_delay)
 
 
 def evaluate_response(
@@ -46,8 +72,8 @@ def evaluate_response(
 
 def run_sequential_ops(
     seed: int, model: str, num_initial_words: int, max_words: int, num_ops: int,
-    variable_len: bool = False, label: str = None,
-) -> dict:
+    variable_len: bool = False, label: str = None, temperature: float = 0,
+) -> dict | None:
 
     model_str = model.replace("/", "-")
     save_dir = Path(__file__).parent.joinpath("results")
@@ -84,6 +110,7 @@ def run_sequential_ops(
             if len(single_token_words) == len(equivalence_chars):
                 break
 
+    # This dict will help us compute the Levenshtein distance at the word level.
     word_to_char = dict()
     for word, char in zip(single_token_words, equivalence_chars):
         word_to_char[word] = char
@@ -132,23 +159,32 @@ def run_sequential_ops(
         f"format as in the original list of words."
     ))]
 
-    temperature = 1
     max_tokens = 2 + 2 * max_words
     if model.startswith("o1-"):
-        # OpenAI o1 models work only with temp=1 and without limit on the output tokens
+        warn_once("OpenAI o1 models require temperature=1 and no output limit.")
         temperature, max_tokens = 1, None
-    response_obj = completion(
-        model, messages=context, temperature=temperature, max_tokens=max_tokens,
-    )
+    try:
+        response_obj = safe_completion(
+            model, messages=context, temperature=temperature, max_tokens=max_tokens,
+        )
+    except Exception as exc:
+        print(f"Unsuccessful completion. Error: {str(exc)}")
+        return
+
     response = response_obj.choices[0].message.content
     dist, reply_words = evaluate_response(response, current_words, word_to_char)
+    try:
+        cost = completion_cost(completion_response=response_obj)
+    except Exception as exc:
+        if warn_once(f"Unable to calculate cost for model {model}."):
+            print(f"Error: {str(exc)}")
+        cost = 0
 
     result = dict(
         seed=seed, model=model, num_initial_words=num_initial_words,
         max_words=max_words, num_ops=num_ops, variable_len=variable_len,
         prompt=context[0]["content"], response=response, reply_words=reply_words,
-        expected=current_words, dist=dist,
-        cost=completion_cost(completion_response=response_obj),
+        expected=current_words, dist=dist, temperature=temperature, cost=cost,
     )
     save_path.parent.mkdir(parents=True, exist_ok=True)
     with open(save_path, "w") as fd:
@@ -176,6 +212,7 @@ def main(args: Namespace):
         distances = list()
         errors = list()
         model_cost = 0
+        temperature = None
 
         for n in range(1, args.ops + 1):
             num_ops.append(n)
@@ -190,7 +227,13 @@ def main(args: Namespace):
                     num_ops=n,
                     label=args.label,
                     variable_len=args.variable_len,
+                    temperature=args.temperature,
                 )
+                if result is None:
+                    continue
+                if temperature is None:
+                    temperature = result["temperature"]
+                assert result["temperature"] == temperature
                 dist = result["dist"]
                 print(f"num_ops={n}; seed={seed}; dist={dist}")
                 dist_list.append(dist)
@@ -206,6 +249,7 @@ def main(args: Namespace):
         print(f"Total cost for model {model}: ${model_cost:.2f}")
         results[model] = dict(
             num_ops=num_ops, rates=rates, distances=distances, errors=errors,
+            temperature=temperature,
         )
 
     # Plot figures
@@ -224,13 +268,14 @@ def main(args: Namespace):
     plt.legend()
     plt.show()
 
-    plt.rcParams.update({'font.size': 6})
+    hot_ico = plt.imread("hot.png")
+    cold_ico = plt.imread("cold.png")
+    num_models = len(args.models)
+    plt.rcParams.update({'font.size': max(5, round(10 - 0.25 * num_models))})
     colors = mpl.colormaps["tab10"].colors
     get_color = lambda i: colors[i % len(colors)]
-    num_models = len(args.models)
     fig, axs = plt.subplots(num_models, 1, figsize=(6, 4 * num_models), sharex=True)
-    aucs = {m: sum(results[m]["rates"]) for m in args.models}
-    for i, model in enumerate(sorted(args.models, key=lambda m: -aucs[m])):
+    for i, model in enumerate(args.models):
         r = results[model]
         ax = axs[i] if num_models > 1 else axs
         ax.fill_between(
@@ -239,12 +284,15 @@ def main(args: Namespace):
         )
         ax.plot(r["num_ops"], r["rates"], color=get_color(i))
         o1, o2 = r["num_ops"][0], r["num_ops"][-1]
-        ax.text(o1 + 0.6 * (o2 - o1), 0.5, f"AuC = {sum(r['rates']):.1f}")
+        ax.text(o1 + 0.6 * (o2 - o1), 0.5, f"AuC = {sum(r["rates"]):.1f}")
         ax.set_ylabel("Accuracy")
         ax.set_ylim((0, 1.05))
         ax.set_xlim((o1, o2))
         ax.legend(markerfirst=False, handlelength=0, handleheight=0, handletextpad=0,
                   handles=[Patch(label=get_label(model))], loc="upper right")
+        axin = ax.inset_axes([0.85, 0.4, 0.2, 0.2])
+        axin.imshow(hot_ico if r["temperature"] > 0.5 else cold_ico)
+        axin.axis('off')
 
     axs[-1].set_xlabel("Number of sequential operations")
     plt.tight_layout()
