@@ -1,10 +1,10 @@
-# Switch-Switch
+# Word Swap Challenge
 
 ### _Measuring sequential logical reasoning in language models_
 
 This test evaluates the ability of a language model to perform a series of operations in one shot. Each operation's effect depends on the previously-applied operations, which makes this test a proxy for assessing the logical complexity that a language model can handle.
 
-A more elaborate description and discussion of the results are available in [this blogpost]().
+A more elaborate description and discussion of the results are available in [this blogpost](https://www.goodai.com/breaking-the-chain-simple-word-swaps-expose-llms-reasoning-limits/).
 
 ## Setup and execution
 
